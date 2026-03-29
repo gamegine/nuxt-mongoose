@@ -29,7 +29,11 @@
   },
   "build": {
     "externals": [
-      "ofetch"
+      "ofetch",
+      "typescript",
+      "source-map-support",
+      "source-map",
+      "buffer-from"
     ]
   },
   "main": "./dist/module.mjs",
