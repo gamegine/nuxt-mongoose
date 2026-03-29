@@ -3,6 +3,14 @@ import { join } from 'pathe'
 import mongoose from 'mongoose'
 import type { CollectionDefinition, DevtoolsServerContext, Resource, ServerFunctions } from '../types'
 import { capitalize, generateApiRoute, generateSchemaFile, pluralize, singularize } from '../utils'
+import ts from 'typescript'
+
+function findSchema(node: ts.Node): ts.ObjectLiteralExpression | undefined {
+  if (ts.isPropertyAssignment(node) && node.name.getText() === 'schema') {
+    if (ts.isObjectLiteralExpression(node.initializer)) return node.initializer
+  }
+  return ts.forEachChild(node, findSchema)
+}
 
 export function setupResourceRPC({ nuxt }: DevtoolsServerContext): any {
   const config = nuxt.options.runtimeConfig.mongoose
@@ -53,7 +61,34 @@ export function setupResourceRPC({ nuxt }: DevtoolsServerContext): any {
       const singular = singularize(collection).toLowerCase()
       const schemaPath = join(config.modelsDir, `${singular}.schema.ts`)
       if (fs.existsSync(schemaPath)) {
-        const content = fs.readFileSync(schemaPath, 'utf-8').match(/schema: \{(.|\n)*\}/g)
+        const filedata = fs.readFileSync(schemaPath, 'utf-8')
+        try {
+          // const module = await import(schemaPath) // dynamic import error
+          // console.warn("rpc:resourceSchema:module",module)
+          // const model = module[Object.keys(module)[0]!] // todo: multi export ?
+          // const schema = model?.schema?.obj
+          // if (schema) return schema
+          const sourceFile = ts.createSourceFile('schema.ts', filedata, ts.ScriptTarget.Latest, true)
+          const schemaLE = findSchema(sourceFile)
+          if (schemaLE) {
+            // const schema = JSON.parse(schemaLE.getText()); // If possible (no undefined, Infinity, etc...)
+            const schema = new Function(`return ${schemaLE.getText()}`)()
+            return schema
+          }
+        }
+        catch (error) { console.error('rpc::resourceSchema error: ', error) }
+
+        const contenthooks = filedata.match(/schema:\s*\{([\s\S]*?)\}\s*,\s*hooks/g)
+        if (contenthooks) {
+          const schemaString = contenthooks[0]
+            .replace('schema: ', '')
+            .replace('hooks', '')
+            .slice(0, -4)
+          // SECURITY FIX: Use Function constructor instead of eval
+          const schema = new Function(`return ${schemaString}`)()
+          return schema
+        }
+        const content = filedata.match(/schema: \{(.|\n)*\}/g)
         if (content) {
           const schemaString = content[0].replace('schema: ', '').slice(0, -3)
           // SECURITY FIX: Use Function constructor instead of eval
